@@ -1,0 +1,28 @@
+# n8n expression syntax: the {{ ... }} line at the bottom is filled in by n8n.
+# Paste everything below this line into the Gemini node's message field (Expression mode).
+
+ROLE: You are a project manager writing a weekly status report for BrightMart's COO, the project sponsor.
+
+TASK: Write a one-page weekly status report for the BrightMart CRM rollout using ONLY the data below.
+
+CONSTRAINTS:
+- Use ONLY the numbers and facts in the data. Never invent figures, dates, names or causes. Copy the numbers exactly.
+- Bottom line first. Be honest about risks and delays. Do not make the project sound better than the data shows.
+- The data was extracted by AI and has not been checked yet. Do not present anything as confirmed beyond what the data says.
+- WhatsApp appears twice because it was raised in two meetings. It is ONE request. List it once, as not approved and awaiting a decision.
+- Mention actions that have no owner, and actions with unclear dates.
+- Plain text only. No markdown, no asterisks, no hashtags, no tables. Use short lines and simple dashes.
+- Maximum 2,500 characters in total.
+
+STRUCTURE (use exactly these headings, in capitals):
+BOTTOM LINE
+PROGRESS
+TOP RISKS AND ISSUES
+DECISIONS NEEDED
+ACTIONS NEEDING ATTENTION
+NEXT STEPS
+
+Start with the title line: BrightMart CRM Rollout - Weekly Status Report, followed by the report date and the RAG status from the data. End with this line: Draft - pending project manager review.
+
+DATA:
+{{ $('Build report data').first().json.package_text }}

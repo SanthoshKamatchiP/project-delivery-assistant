@@ -1,0 +1,15 @@
+MEETING: BrightMart CRM Rollout - Risk Review Workshop
+DATE: 19 March 2026
+ATTENDEES: Priya Nair (Project Manager), Arjun Rao, Karthik Subramanian, Meera Iyer
+
+Priya: Let's list the top risks. Karthik, start with POS.
+Karthik: The POS API credentials are still missing. It's now an issue, not a risk. If they don't arrive by next week, the integration will miss 27 March, and UAT cannot test sales flow properly. I'd rate it high.
+Priya: Agreed, high. Karthik, please escalate to the vendor account manager this week.
+Karthik: Will do.
+Meera: Data quality is high too. Even with contractors, we may not finish cleansing before UAT. The duplicate rule from Finance is still pending. I'll get the sign-off from Finance by 24 March.
+Arjun: The loyalty module depends on POS integration for point calculations. If POS slips, loyalty slips. I should prepare a fallback, maybe a manual points upload, by 25 March.
+Priya: Good. What about UAT resources?
+Meera: I think we agreed six stores for UAT, or maybe eight? Not sure.
+Priya: I'll confirm that. Store manager availability is medium risk for me.
+Arjun: Also, the vendor's lead consultant goes on leave from mid April. That overlaps with go-live preparation. Medium risk.
+Priya: Noted. Mitigation: ask the vendor for a named backup consultant. Let's also record the WhatsApp request as a scope change that is not yet approved. Thanks everyone.

@@ -1,0 +1,1225 @@
+{
+  "name": "Project Delivery Assistant",
+  "nodes": [
+    {
+      "parameters": {
+        "formTitle": "Meeting Transcript Upload",
+        "formFields": {
+          "values": [
+            {
+              "fieldLabel": "transcript",
+              "fieldType": "textarea",
+              "requiredField": true
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "c09c3cb6-371c-4357-8529-b82136ec6ff3",
+      "name": "On form submission",
+      "type": "n8n-nodes-base.formTrigger",
+      "typeVersion": 2.6,
+      "position": [
+        -112,
+        -160
+      ]
+    },
+    {
+      "parameters": {
+        "modelId": {
+          "__rl": true,
+          "mode": "list",
+          "value": "models/gemini-3-flash-preview",
+          "cachedResultName": "Gemini 3 Flash Preview",
+          "cachedResultUrl": ""
+        },
+        "messages": {
+          "values": [
+            {
+              "content": "=ROLE: You are a project management office analyst assisting a project manager.\n\nTASK: Read the meeting transcript below and extract (1) action items and (2) risks, issues, decisions and scope changes.\n\nCONTEXT: Project is the BrightMart CRM rollout. The meeting name and date are given in the transcript header. Convert the header date to YYYY-MM-DD, and use it to interpret relative dates such as \"Monday\" or \"Friday\".\n\nCONSTRAINTS:\n- Use ONLY information stated in the transcript. Never invent owners, dates, risks or facts.\n- Only log a risk or issue if a speaker raised it or described a clear delay, blocker or dependency. Do not log a plain status update as a risk or issue. Do not create risks from your own inference.\n- Log one item per underlying problem. Never log the same problem twice (for example as both an Issue and a Risk). A Scope Change is logged once, as a Scope Change only.\n- Use type \"Decision\" only when a speaker states that something was decided, approved or agreed. An open question, or a fact someone is unsure about, is an Issue, not a Decision.\n- type must be one of: Risk, Issue, Decision, Scope Change.\n- Put a mitigation inside the item's \"mitigation\" field. Create a separate action only when a named person commits to doing something or is asked to do it.\n\nDATES AND OWNERS (actions):\n- If a weekday or relative day is stated (\"Wednesday\", \"by Monday\"), convert it to YYYY-MM-DD and flag DATE_INFERRED.\n- If an explicit calendar date is stated (\"by 24 March\"), convert it to YYYY-MM-DD and flag NONE.\n- If the timing is vague (\"soon\", \"this week\", \"end of next week\", \"roughly\") or depends on another event, set due_date to null, keep the original words in due_date_raw_text, and flag DATE_UNCLEAR.\n- For a recurring commitment (\"every Friday\"), set due_date to null, put the recurrence in due_date_raw_text, and flag NONE.\n- If no person is named for an action, set owner to null and flag OWNER_MISSING. If a person is named, never use OWNER_MISSING.\n- CONFLICTING_INFO = two speakers contradict each other, or one speaker is explicitly unsure between options (\"six or maybe eight\"). Dependence on another event is not a conflict.\n- Several flags may be combined, separated by commas. Use NONE if nothing is wrong.\n\nFLAGS FOR ITEMS: use ONLY CONFLICTING_INFO or NONE. Never use OWNER_MISSING, DATE_INFERRED or DATE_UNCLEAR on an item.\n\nSEVERITY: allowed values are High, Medium, Low, Unrated, or null. Use \"Unrated\" unless a speaker explicitly gave a rating or described the impact as high, medium, low, critical, major or minor. Never assign severity yourself. Use null for Decisions.\n\nQUOTES: source_quote must be a short verbatim quote (under 20 words) from the speaker who describes the item, and it must directly support the description. Escape any double quotation marks inside text values.\n\nNULLS: Use null (not an empty string) for any unknown owner, date, date text, severity or mitigation.\n\n- Extract EVERY action and EVERY risk, issue, decision and scope change mentioned. Never leave an item out because its owner is unclear. For each item, fill owner with the person who raised it or is named to resolve it, using the full name from the attendee list. If no person fits, use null, but still include the item.\n\nOUTPUT: Return ONLY one valid JSON object. No markdown, no code fences, no explanation, no trailing commas. Use exactly this shape:\n{\n \"meeting_name\": \"\",\n \"meeting_date\": \"YYYY-MM-DD\",\n \"actions\": [\n  {\"description\": \"\", \"owner\": null, \"due_date\": null, \"due_date_raw_text\": null, \"flag\": \"NONE\", \"source_quote\": \"\"}\n ],\n \"items\": [\n  {\"type\": \"\", \"description\": \"\", \"severity\": \"Unrated\", \"mitigation\": null, \"owner\": null, \"flag\": \"NONE\", \"source_quote\": \"\"}\n ]\n}\n\nTRANSCRIPT:\n{{ $json.transcript }}"
+            }
+          ]
+        },
+        "builtInTools": {},
+        "options": {}
+      },
+      "id": "78cd7fc5-8eb9-432a-af2f-11d90bd5afb3",
+      "name": "Message a model",
+      "type": "@n8n/n8n-nodes-langchain.googleGemini",
+      "typeVersion": 1.2,
+      "position": [
+        32,
+        32
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const v = x => (x === null || x === undefined) ? '' : x;\nconst loggedAt = new Date().toISOString().slice(0, 16).replace('T', ' ');\nconst num = n => String(n + 1).padStart(2, '0');\n\nfunction scopeNote(type, desc) {\n  const d = v(desc);\n  if (type === 'Scope Change' && !/not\\s+(yet\\s+)?approved/i.test(d)) {\n    return d + ' [Not approved - decision pending]';\n  }\n  return d;\n}\n\nfunction fixFlag(flag, owner, isAction) {\n  let f = String(flag || 'NONE').split(',').map(s => s.trim()).filter(s => s && s !== 'NONE' && s !== 'OWNER_MISSING');\n  if (isAction && !owner) f.push('OWNER_MISSING');\n  return f.length ? f.join(', ') : 'NONE';\n}\n\nconst rows = [];\n\nfor (const item of $input.all()) {\n  const raw = item.json;\n  const parts = raw.content?.parts ?? [];\n  let text = parts.map(p => p.text ?? '').join('') || raw.text || raw.output || '';\n  text = text.replace(/```json|```/g, '').trim();\n  text = text.slice(text.indexOf('{'), text.lastIndexOf('}') + 1);\n  const data = JSON.parse(text);\n\n  (data.actions || []).forEach((a, i) => rows.push({ json: {\n    kind: 'action',\n    id: `A-${data.meeting_date}-${num(i)}`,\n    source_meeting: v(data.meeting_name),\n    meeting_date: v(data.meeting_date),\n    description: v(a.description),\n    owner: v(a.owner),\n    due_date: v(a.due_date),\n    due_date_raw_text: v(a.due_date_raw_text),\n    flag: fixFlag(a.flag, a.owner, true),\n    source_quote: v(a.source_quote),\n    status: 'Open',\n    logged_at: loggedAt\n  }}));\n\n  (data.items || []).forEach((it, i) => rows.push({ json: {\n    kind: 'item',\n    id: `R-${data.meeting_date}-${num(i)}`,\n    source_meeting: v(data.meeting_name),\n    type: v(it.type),\n    description: scopeNote(it.type, it.description),\n    severity: v(it.severity),\n    mitigation: v(it.mitigation),\n    owner: v(it.owner),\n    flag: fixFlag(it.flag, it.owner, false),\n    source_quote: v(it.source_quote),\n    logged_at: loggedAt\n  }}));\n}\n\nreturn rows;"
+      },
+      "id": "7ee257cf-1886-4156-bff7-8e1e905e48fc",
+      "name": "Code in JavaScript",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        352,
+        32
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 4
+          },
+          "conditions": [
+            {
+              "id": "d2e6b80f-530f-4fe7-a6f8-31ebec261128",
+              "leftValue": "={{ $json.kind }}",
+              "rightValue": "action",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "b997715d-89d4-4d35-bc86-30f73bed0b17",
+      "name": "If",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.4,
+      "position": [
+        576,
+        32
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "appendOrUpdate",
+        "documentId": {
+          "__rl": true,
+          "value": "YOUR_GOOGLE_SHEET_ID",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "actions_log",
+          "mode": "name"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "Action ID": "={{ $json.id }}",
+            "Source Meeting": "={{ $json.source_meeting }}",
+            "Meeting Date": "={{ $json.meeting_date }}",
+            "Description": "={{ $json.description }}",
+            "Owner": "={{ $json.owner }}",
+            "Due Date": "={{ $json.due_date }}",
+            "Due Date Raw Text": "={{ $json.due_date_raw_text }}",
+            "Flag": "={{ $json.flag }}",
+            "Source Quote": "={{ $json.source_quote }}",
+            "Status": "={{ $json.status }}",
+            "Logged At": "={{ $json.logged_at }}"
+          },
+          "matchingColumns": [
+            "Action ID"
+          ],
+          "schema": [
+            {
+              "id": "Action ID",
+              "displayName": "Action ID",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Source Meeting",
+              "displayName": "Source Meeting",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Meeting Date",
+              "displayName": "Meeting Date",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Description",
+              "displayName": "Description",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Owner",
+              "displayName": "Owner",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Due Date",
+              "displayName": "Due Date",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Due Date Raw Text",
+              "displayName": "Due Date Raw Text",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Flag",
+              "displayName": "Flag",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Source Quote",
+              "displayName": "Source Quote",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Status",
+              "displayName": "Status",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Logged At",
+              "displayName": "Logged At",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "id": "656e853a-9960-4a18-90b9-4110338f59fb",
+      "name": "action_log",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        800,
+        -64
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "appendOrUpdate",
+        "documentId": {
+          "__rl": true,
+          "value": "YOUR_GOOGLE_SHEET_ID",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "risks_log",
+          "mode": "name"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "Item ID": "={{ $json.id }}",
+            "Source Meeting": "={{ $json.source_meeting }}",
+            "Type": "={{ $json.type }}",
+            "Description": "={{ $json.description }}",
+            "Severity": "={{ $json.severity }}",
+            "Mitigation": "={{ $json.mitigation }}",
+            "Owner": "={{ $json.owner }}",
+            "Flag": "={{ $json.flag }}",
+            "Source Quote": "={{ $json.source_quote }}",
+            "Logged At": "={{ $json.logged_at }}"
+          },
+          "matchingColumns": [
+            "Item ID"
+          ],
+          "schema": [
+            {
+              "id": "Item ID",
+              "displayName": "Item ID",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Source Meeting",
+              "displayName": "Source Meeting",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Type",
+              "displayName": "Type",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Description",
+              "displayName": "Description",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Severity",
+              "displayName": "Severity",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Mitigation",
+              "displayName": "Mitigation",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Owner",
+              "displayName": "Owner",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Flag",
+              "displayName": "Flag",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Source Quote",
+              "displayName": "Source Quote",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Logged At",
+              "displayName": "Logged At",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "id": "7537d76d-0220-48d9-9dd4-24c8bf3d49cc",
+      "name": "risk_log",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        800,
+        128
+      ]
+    },
+    {
+      "parameters": {},
+      "id": "dbbbcb7f-ee85-4231-92f4-3a4620cb2cb3",
+      "name": "Merge",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [
+        1104,
+        48
+      ]
+    },
+    {
+      "parameters": {
+        "documentId": {
+          "__rl": true,
+          "value": "YOUR_GOOGLE_SHEET_ID",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "summary",
+          "mode": "name"
+        },
+        "filtersUI": {
+          "values": []
+        },
+        "options": {}
+      },
+      "id": "8718bd62-4280-44b3-b55d-95eb272a34be",
+      "name": "Get_summary",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        1312,
+        48
+      ],
+      "executeOnce": true
+    },
+    {
+      "parameters": {
+        "documentId": {
+          "__rl": true,
+          "value": "YOUR_GOOGLE_SHEET_ID",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "actions_log",
+          "mode": "name"
+        },
+        "options": {}
+      },
+      "id": "fd95d178-6817-4147-9b54-aaf8fed2bf2b",
+      "name": "Get_actions_log",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        1504,
+        48
+      ],
+      "executeOnce": true
+    },
+    {
+      "parameters": {
+        "documentId": {
+          "__rl": true,
+          "value": "YOUR_GOOGLE_SHEET_ID",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "risks_log",
+          "mode": "name"
+        },
+        "options": {}
+      },
+      "id": "8238f0b3-185c-48ec-b7a4-766dea6f99e5",
+      "name": "Get_risks_log",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        1680,
+        48
+      ],
+      "executeOnce": true
+    },
+    {
+      "parameters": {
+        "jsCode": "const sum = {};\n$('Get_summary').all().forEach(r => { sum[r.json['Metric']] = r.json['Value']; });\n\nconst pct = x => (Math.round(Number(x) * 1000) / 10) + '%';\nconst pts = x => (Math.round(Number(x) * 1000) / 10) + ' pts';\n\nconst health = {\n  report_date: sum['Report date'],\n  total_tasks: sum['Total tasks'],\n  actual_complete: pct(sum['Actual % complete']),\n  planned_complete: pct(sum['Planned % complete']),\n  schedule_variance: pts(sum['Schedule variance (pts)']),\n  overdue_tasks: sum['Overdue tasks'],\n  critical_overdue_tasks: sum['Critical overdue tasks'],\n  max_days_overdue: sum['Max days overdue'],\n  rag_status: sum['RAG status']\n};\n\nconst actions = $('Get_actions_log').all().map(r => ({\n  id: r.json['Action ID'],\n  meeting: r.json['Source Meeting'],\n  description: r.json['Description'],\n  owner: r.json['Owner'] || 'UNASSIGNED',\n  due_date: r.json['Due Date'] || '',\n  due_text: r.json['Due Date Raw Text'] || '',\n  flag: r.json['Flag']\n}));\n\nconst items = $('Get_risks_log').all().map(r => ({\n  id: r.json['Item ID'],\n  meeting: r.json['Source Meeting'],\n  type: r.json['Type'],\n  description: r.json['Description'],\n  severity: r.json['Severity'] || '',\n  owner: r.json['Owner'] || 'UNASSIGNED',\n  mitigation: r.json['Mitigation'] || '',\n  flag: r.json['Flag']\n}));\n\nconst count = (arr, fn) => arr.filter(fn).length;\nconst counts = {\n  actions_total: actions.length,\n  actions_without_owner: count(actions, a => a.owner === 'UNASSIGNED'),\n  actions_with_unclear_date: count(actions, a => /DATE_UNCLEAR/.test(a.flag)),\n  risks: count(items, i => i.type === 'Risk'),\n  issues: count(items, i => i.type === 'Issue'),\n  decisions: count(items, i => i.type === 'Decision'),\n  scope_changes_pending: count(items, i => i.type === 'Scope Change'),\n  high_severity_items: count(items, i => i.severity === 'High'),\n  conflicting_info_items: count(items, i => /CONFLICTING_INFO/.test(i.flag))\n};\n\nconst package_json = { health, counts, actions, items };\nreturn [{ json: { ...package_json, package_text: JSON.stringify(package_json) } }];"
+      },
+      "id": "f278b16e-f249-4fc3-9ae7-e6a64be3c5cf",
+      "name": "Build report data",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1856,
+        48
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://quickchart.io/chart",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ (() => { const d = $('Build report data').first().json; const h = d.health; const c = d.counts; const rag = String(h.rag_status || ''); const color = rag === 'Green' ? '#2e7d32' : (rag === 'Red' ? '#c62828' : '#f9a825'); return JSON.stringify({ width: 1200, height: 675, format: 'png', backgroundColor: 'white', chart: { type: 'horizontalBar', data: { labels: ['Overdue tasks', 'Critical overdue', 'Max days overdue', 'Actions logged', 'Actions without owner', 'Risks', 'Issues', 'High severity items'], datasets: [{ label: 'Count', backgroundColor: ['#1f4e79', '#1f4e79', '#1f4e79', '#5b7a99', '#5b7a99', '#7f8c8d', '#7f8c8d', '#7f8c8d'], data: [h.overdue_tasks, h.critical_overdue_tasks, h.max_days_overdue, c.actions_total, c.actions_without_owner, c.risks, c.issues, c.high_severity_items].map(Number) }] }, options: { legend: { display: false }, title: { display: true, fontSize: 20, fontColor: color, text: ['BrightMart CRM Rollout - Weekly Status', 'Report date ' + h.report_date + '   |   RAG status: ' + rag, 'Actual complete ' + h.actual_complete + '   |   Planned complete ' + h.planned_complete + '   |   Schedule variance ' + h.schedule_variance] }, plugins: { datalabels: { anchor: 'end', align: 'right', color: '#1f2d3d', font: { size: 16, weight: 'bold' } } }, scales: { xAxes: [{ ticks: { beginAtZero: true } }] }, layout: { padding: { right: 40, bottom: 10 } } } } }); })() }}",
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "file"
+            }
+          }
+        }
+      },
+      "id": "54832534-fea8-46be-813a-0950919e7f16",
+      "name": "Make dashboard image",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        2048,
+        48
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "sendPhoto",
+        "chatId": "YOUR_TELEGRAM_CHAT_ID",
+        "binaryData": true,
+        "additionalFields": {
+          "caption": "BrightMart CRM Rollout - Weekly Status Dashboard (draft)"
+        }
+      },
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        2288,
+        -128
+      ],
+      "id": "c1721f24-cc33-4ac6-9da4-85d5573c3b62",
+      "name": "Send dashboard image"
+    },
+    {
+      "parameters": {
+        "chatId": "YOUR_TELEGRAM_CHAT_ID",
+        "text": "={{ $json.short_text }}",
+        "additionalFields": {
+          "appendAttribution": false,
+          "disable_web_page_preview": true,
+          "parse_mode": "HTML"
+        }
+      },
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        2656,
+        176
+      ],
+      "id": "73d33b71-6258-41b2-a1c7-fec0aaa04a29",
+      "name": "Send report text"
+    },
+    {
+      "parameters": {
+        "modelId": {
+          "__rl": true,
+          "value": "models/gemini-3.5-flash-lite",
+          "mode": "list",
+          "cachedResultName": "Gemini 3.5 Flash Lite"
+        },
+        "messages": {
+          "values": [
+            {
+              "content": "=ROLE: You are a project manager writing a weekly status report for BrightMart's COO, the project sponsor.\n\nTASK: Write a one-page weekly status report for the BrightMart CRM rollout using ONLY the data below.\n\nCONSTRAINTS:\n- Use ONLY the numbers and facts in the data. Never invent figures, dates, names or causes. Copy the numbers exactly.\n- Bottom line first. Be honest about risks and delays. Do not make the project sound better than the data shows.\n- The data was extracted by AI and has not been checked yet. Do not present anything as confirmed beyond what the data says.\n- WhatsApp appears twice because it was raised in two meetings. It is ONE request. List it once, as not approved and awaiting a decision.\n- Mention actions that have no owner, and actions with unclear dates.\n- Plain text only. No markdown, no asterisks, no hashtags, no tables. Use short lines and simple dashes.\n- Maximum 2,500 characters in total.\n\nSTRUCTURE (use exactly these headings, in capitals):\nBOTTOM LINE\nPROGRESS\nTOP RISKS AND ISSUES\nDECISIONS NEEDED\nACTIONS NEEDING ATTENTION\nNEXT STEPS\n\nStart with the title line: BrightMart CRM Rollout - Weekly Status Report, followed by the report date and the RAG status from the data. End with this line: Draft - pending project manager review.\n\nDATA:\n{{ $('Build report data').first().json.package_text }}"
+            }
+          ]
+        },
+        "builtInTools": {},
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.googleGemini",
+      "typeVersion": 1.2,
+      "position": [
+        2592,
+        -128
+      ],
+      "id": "289a39cc-21e8-42ce-8bdf-380b81bca1f8",
+      "name": "Write_report"
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "value": "YOUR_GOOGLE_SHEET_ID",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "weekly_report",
+          "mode": "name"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "Week Ending": "={{ $('Build report data').first().json.health.report_date }}",
+            "RAG": "={{ $('Build report data').first().json.health.rag_status }}",
+            "Draft Report": "={{ $('Write_report').first().json.content?.parts?.[0]?.text ?? $('Write report').first().json.text }}",
+            "Approval Status": "Pending review"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "Week Ending",
+              "displayName": "Week Ending",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "RAG",
+              "displayName": "RAG",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Draft Report",
+              "displayName": "Draft Report",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Approval Status",
+              "displayName": "Approval Status",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Reviewed By",
+              "displayName": "Reviewed By",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Reviewed At",
+              "displayName": "Reviewed At",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Reviewer Comment",
+              "displayName": "Reviewer Comment",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        2848,
+        176
+      ],
+      "id": "246230c8-6a6a-4659-8b84-8b50ed87bba1",
+      "name": "Append row in sheet"
+    },
+    {
+      "parameters": {
+        "jsCode": "const d = $('Build report data').first().json;\nconst h = d.health, c = d.counts;\n\n// Count each scope-change request once (same request can appear in two meetings)\nconst seen = new Set();\nd.items.filter(i => i.type === 'Scope Change').forEach(i => {\n  const m = String(i.description).match(/\\b[A-Z][a-z]+[A-Z][A-Za-z]*\\b/);\n  seen.add(m ? m[0].toLowerCase() : String(i.description).toLowerCase());\n});\n\nconst short = (t, n) => t.length > n ? t.slice(0, n) + '...' : t;\nconst top = d.items\n  .filter(i => i.severity === 'High')\n  .slice(0, 3)\n  .map(i => '- ' + short(String(i.description), 140) + ' (' + i.owner + ')');\n\nconst lines = [\n  'BrightMart CRM Rollout - Weekly Status',\n  'Report date: ' + h.report_date,\n  'Status: ' + String(h.rag_status).toUpperCase(),\n  '',\n  'PROGRESS',\n  '- Actual ' + h.actual_complete + ' vs planned ' + h.planned_complete + ' (' + h.schedule_variance + ')',\n  '- Overdue tasks: ' + h.overdue_tasks + ' (critical: ' + h.critical_overdue_tasks + ', longest: ' + h.max_days_overdue + ' days)',\n  '',\n  'LOGS FROM MEETINGS',\n  '- Actions: ' + c.actions_total + ' (no owner: ' + c.actions_without_owner + ', unclear date: ' + c.actions_with_unclear_date + ')',\n  '- Risks: ' + c.risks + ' | Issues: ' + c.issues + ' | Decisions: ' + c.decisions,\n  '- High severity: ' + c.high_severity_items,\n  '- Scope changes awaiting approval: ' + seen.size,\n  ''\n];\nif (top.length) { lines.push('TOP HIGH-SEVERITY ITEMS'); lines.push(...top); lines.push(''); }\nlines.push('Full report (Weekly Report tab):');\nlines.push('PASTE_YOUR_GOOGLE_SHEET_LINK_HERE');\nlines.push('Draft - pending project manager review.');\n\nreturn [{ json: { short_text: lines.join('\\n') } }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2448,
+        176
+      ],
+      "id": "5c83b3ff-63dd-4e7f-b069-a67069316e10",
+      "name": "Build short summary"
+    },
+    {
+      "parameters": {
+        "operation": "sendAndWait",
+        "chatId": "YOUR_TELEGRAM_CHAT_ID",
+        "message": "=Weekly status report for {{ $('Build report data').first().json.health.report_date }} (status: {{ $('Build report data').first().json.health.rag_status }}) is ready for your review. Please approve or reject it.",
+        "approvalOptions": {
+          "values": {
+            "approvalType": "double"
+          }
+        },
+        "options": {
+          "appendAttribution": false
+        }
+      },
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        3024,
+        176
+      ],
+      "id": "b75088f2-a3f1-49ad-bdca-cef389c8c0f4",
+      "name": "PM approval"
+    },
+    {
+      "parameters": {
+        "operation": "update",
+        "documentId": {
+          "__rl": true,
+          "value": "YOUR_GOOGLE_SHEET_ID",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "weekly_report",
+          "mode": "name"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "Week Ending": "={{ $('Build report data').first().json.health.report_date }}",
+            "Approval Status": "={{ $json.data.approved ? 'Approved' : 'Rejected' }}",
+            "Reviewed By": "Project Manager (via Telegram)",
+            "Reviewed At": "={{ $json.data.respondedAt }}",
+            "Reviewer Comment": "={{ $json.data.approved ? 'Approved via Telegram' : 'Rejected via Telegram - revision needed' }}"
+          },
+          "matchingColumns": [
+            "Week Ending"
+          ],
+          "schema": [
+            {
+              "id": "Week Ending",
+              "displayName": "Week Ending",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "RAG",
+              "displayName": "RAG",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Draft Report",
+              "displayName": "Draft Report",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Approval Status",
+              "displayName": "Approval Status",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Reviewed By",
+              "displayName": "Reviewed By",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Reviewed At",
+              "displayName": "Reviewed At",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Reviewer Comment",
+              "displayName": "Reviewer Comment",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "row_number",
+              "displayName": "row_number",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "number",
+              "canBeUsedToMatch": true,
+              "readOnly": true,
+              "removed": true
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        3216,
+        16
+      ],
+      "id": "15651d27-b209-4d5b-896d-51176ca4bb60",
+      "name": "Update row in sheet"
+    },
+    {
+      "parameters": {
+        "pollTimes": {
+          "item": [
+            {
+              "mode": "everyMinute"
+            }
+          ]
+        },
+        "triggerOn": "specificFolder",
+        "folderToWatch": {
+          "__rl": true,
+          "value": "YOUR_DRIVE_FOLDER_ID",
+          "mode": "id"
+        },
+        "event": "fileCreated",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleDriveTrigger",
+      "typeVersion": 1,
+      "position": [
+        -672,
+        -176
+      ],
+      "id": "24ad64d1-04b8-4b26-9e72-2622a2e2b6df",
+      "name": "Google Drive Trigger",
+      "disabled": true
+    },
+    {
+      "parameters": {
+        "operation": "download",
+        "fileId": {
+          "__rl": true,
+          "value": "={{ $json.id }}",
+          "mode": "id"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleDrive",
+      "typeVersion": 3,
+      "position": [
+        -720,
+        64
+      ],
+      "id": "d5013c1f-4a2f-4d67-bab3-fb53c76242ca",
+      "name": "Download file"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "10bdce26-77ad-4857-a15b-a53dc3c7ea30",
+              "name": "transcript",
+              "value": "={{ $json.data }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.5,
+      "position": [
+        -272,
+        64
+      ],
+      "id": "4013af5d-b4f2-4ab1-ab86-98f9a65e39a2",
+      "name": "Edit Fields"
+    },
+    {
+      "parameters": {
+        "operation": "text",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.extractFromFile",
+      "typeVersion": 1.2,
+      "position": [
+        -496,
+        64
+      ],
+      "id": "5a515691-fe97-4118-a21d-5cef94b26f16",
+      "name": "Extract from File"
+    },
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        -1248,
+        64
+      ],
+      "id": "873935f8-4a58-46c7-bc89-7800b99d67b5",
+      "name": "When clicking ‘Execute workflow’"
+    },
+    {
+      "parameters": {
+        "resource": "fileFolder",
+        "returnAll": true,
+        "filter": {
+          "folderId": {
+            "__rl": true,
+            "value": "YOUR_DRIVE_FOLDER_ID",
+            "mode": "id"
+          }
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleDrive",
+      "typeVersion": 3,
+      "position": [
+        -992,
+        64
+      ],
+      "id": "0a346eba-e10f-43b0-9d3d-7df28364e345",
+      "name": "List transcripts"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "On form submission": {
+      "main": [
+        [
+          {
+            "node": "Message a model",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Message a model": {
+      "main": [
+        [
+          {
+            "node": "Code in JavaScript",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code in JavaScript": {
+      "main": [
+        [
+          {
+            "node": "If",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "If": {
+      "main": [
+        [
+          {
+            "node": "action_log",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "risk_log",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "action_log": {
+      "main": [
+        [
+          {
+            "node": "Merge",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "risk_log": {
+      "main": [
+        [
+          {
+            "node": "Merge",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Merge": {
+      "main": [
+        [
+          {
+            "node": "Get_summary",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get_summary": {
+      "main": [
+        [
+          {
+            "node": "Get_actions_log",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get_actions_log": {
+      "main": [
+        [
+          {
+            "node": "Get_risks_log",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get_risks_log": {
+      "main": [
+        [
+          {
+            "node": "Build report data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build report data": {
+      "main": [
+        [
+          {
+            "node": "Make dashboard image",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Make dashboard image": {
+      "main": [
+        [
+          {
+            "node": "Send dashboard image",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send dashboard image": {
+      "main": [
+        [
+          {
+            "node": "Write_report",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Write_report": {
+      "main": [
+        [
+          {
+            "node": "Build short summary",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send report text": {
+      "main": [
+        [
+          {
+            "node": "Append row in sheet",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build short summary": {
+      "main": [
+        [
+          {
+            "node": "Send report text",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Append row in sheet": {
+      "main": [
+        [
+          {
+            "node": "PM approval",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "PM approval": {
+      "main": [
+        [
+          {
+            "node": "Update row in sheet",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Google Drive Trigger": {
+      "main": [
+        []
+      ]
+    },
+    "Download file": {
+      "main": [
+        [
+          {
+            "node": "Extract from File",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract from File": {
+      "main": [
+        [
+          {
+            "node": "Edit Fields",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Edit Fields": {
+      "main": [
+        [
+          {
+            "node": "Message a model",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "When clicking ‘Execute workflow’": {
+      "main": [
+        [
+          {
+            "node": "List transcripts",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "List transcripts": {
+      "main": [
+        [
+          {
+            "node": "Download file",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "timeSavedMode": "fixed",
+    "timezone": "Asia/Kolkata",
+    "callerPolicy": "workflowsFromSameOwner",
+    "availableInMCP": false
+  },
+  "meta": {
+    "templateCredsSetupCompleted": true
+  },
+  "nodeGroups": [],
+  "tags": []
+}

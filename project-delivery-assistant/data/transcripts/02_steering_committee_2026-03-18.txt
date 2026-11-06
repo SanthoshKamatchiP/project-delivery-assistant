@@ -1,0 +1,17 @@
+MEETING: BrightMart CRM Rollout - Steering Committee Call
+DATE: 18 March 2026
+ATTENDEES: Rahul Menon (COO, Sponsor), Daniel Cho (Procurement), Priya Nair (Project Manager)
+
+Rahul: Priya, give me the headline. Are we still going live on 4 May?
+Priya: Yes, but it's tight. We are about a week behind on configuration and data cleansing is slower than planned because of duplicate customer records.
+Rahul: What do you need from me?
+Priya: Extra hands on data cleansing. Two temporary contractors for about four weeks would bring it back on track. Estimated cost is 4.5 lakh rupees.
+Rahul: Approved. Daniel, please raise the purchase order.
+Daniel: I'll raise the PO by Monday.
+Rahul: Good. Now, one more thing. The marketing head wants WhatsApp messaging for customers inside the CRM. It should be quick, the vendor says they have a connector.
+Priya: That's not in the current scope. It would need integration work and testing, and it may affect the go-live date.
+Rahul: Just see what it takes. I don't want to delay go-live but I do want WhatsApp.
+Priya: I'll assess impact, though I can't promise the date holds.
+Rahul: Fine. Also, I want a status report every Friday from now on, short, one page. And store managers must be available for UAT. Can you confirm that?
+Priya: I'll check with the store operations team. I'm not sure how many managers we can release.
+Rahul: Sort it out. Anything else? No. Thanks, all.

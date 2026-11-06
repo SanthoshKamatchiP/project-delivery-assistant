@@ -1,0 +1,25 @@
+# Secrets - never commit these
+.env
+*.env
+*.key
+*.pem
+credentials*.json
+secrets/
+
+# n8n local data (if you ever self-host)
+.n8n/
+n8n_data/
+
+# OS and editor files
+.DS_Store
+Thumbs.db
+desktop.ini
+.vscode/
+.idea/
+
+# Node
+node_modules/
+
+# Large files (remove this line if you want the recording in the repo)
+*.mp4
+*.mov

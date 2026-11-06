@@ -1,0 +1,17 @@
+MEETING: BrightMart CRM Rollout - Weekly Project Sync
+DATE: 16 March 2026
+ATTENDEES: Priya Nair (Project Manager), Arjun Rao (CRM Lead), Meera Iyer (Data Lead), Karthik Subramanian (Integration), Sana Khan (Marketing Systems), Lakshmi Devi (Training)
+
+Priya: Let's start with build status. Arjun, sales module?
+Arjun: It's about 80 percent done but it has slipped. The approval workflows took longer than planned. I can finish the configuration by end of next week.
+Priya: End of next week, so the 27th?
+Arjun: Yes, roughly. Depends on whether the vendor answers my two open tickets.
+Priya: Meera, data cleansing?
+Meera: We're at 60 percent. The problem is duplicates. Different stores record the same customer differently, and we have no agreed rule for what counts as a duplicate. Finance needs to confirm the rule for loyalty customers. Someone should ask Finance about that.
+Priya: Agreed, that's blocking you. Let's keep going. Karthik, POS integration?
+Karthik: The vendor still hasn't sent the API credentials for the POS connector. I'll chase them on Wednesday. Without credentials I can't start the real integration, only mock it.
+Priya: That's a risk for the 27th deadline. Sana, email tool?
+Sana: Waiting on brand templates from the agency. Once I get them it's about three days of work.
+Priya: Lakshmi, training material?
+Lakshmi: I'll share the training outline soon. I've only just started.
+Priya: Okay. Decision: we keep the UAT start date at 30 March for now and review it on Friday. I'll send the updated plan on Friday. Anything else? No? Thanks everyone.
